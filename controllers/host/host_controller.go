@@ -861,15 +861,22 @@ func (r *HostReconciler) ReconcileDisabledHost(client *gophercloud.ServiceClient
 // CompareFileSystemTypes determine if there is difference regarding optional
 // file system types between two profile specs.
 func (r *HostReconciler) CompareFileSystemTypes(in *starlingxv1.HostProfileSpec, other *starlingxv1.HostProfileSpec) bool {
+	logHost.Info("Starting CompareFileSystemTypes")
+
 	if other == nil {
+		logHost.Info("Other profile is nil, returning false")
 		return false
 	}
 
 	if (in.Storage == nil) && (other.Storage == nil) {
+		logHost.Info("Both Storage fields are nil, returning true")
 		return true
 	} else if in.Storage != nil {
+		logHost.Info("In profile Storage is not nil, checking for equality")
+
 		if in.Storage.DeepEqual(other.Storage) {
 			// The full storage profile matches therefore the file systems match.
+			logHost.Info("Full storage profile matches, file systems match")
 			return true
 		}
 
@@ -877,6 +884,7 @@ func (r *HostReconciler) CompareFileSystemTypes(in *starlingxv1.HostProfileSpec,
 		current := []string{}
 
 		if in.Storage.FileSystems != nil {
+			logHost.Info("Collecting configured file systems from in profile")
 			for _, fsInfo := range *in.Storage.FileSystems {
 				configured = append(configured, fsInfo.Name)
 			}
@@ -884,6 +892,7 @@ func (r *HostReconciler) CompareFileSystemTypes(in *starlingxv1.HostProfileSpec,
 
 		if other.Storage != nil {
 			if other.Storage.FileSystems != nil {
+				logHost.Info("Collecting current file systems from other profile")
 				for _, fs := range *other.Storage.FileSystems {
 					current = append(current, fs.Name)
 				}
@@ -891,14 +900,20 @@ func (r *HostReconciler) CompareFileSystemTypes(in *starlingxv1.HostProfileSpec,
 		}
 
 		// Find difference of file system types to add or remove
+		logHost.Info("Calculating file system delta")
 		added, removed, _ := utils.ListDelta(current, configured)
+		logHost.Info("File system delta calculated", "added", added, "removed", removed)
+
 		_, _, fs_to_add := utils.ListDelta(added, FileSystemCreationAllowed)
 		_, _, fs_to_remove := utils.ListDelta(removed, FileSystemDeletionAllowed)
 
 		if len(fs_to_remove) > 0 || len(fs_to_add) > 0 {
+			logHost.Info("Differences in file systems found", "to_add", fs_to_add, "to_remove", fs_to_remove)
 			return false
 		}
 	}
+
+	logHost.Info("CompareFileSystemTypes completed, no differences found")
 	return true
 }
 
@@ -906,32 +921,42 @@ func (r *HostReconciler) CompareFileSystemTypes(in *starlingxv1.HostProfileSpec,
 // two profile specs. This method takes into consideration that the storage
 // section may be completely empty on either side of the comparison.
 func (r *HostReconciler) CompareOSDs(in *starlingxv1.HostProfileSpec, other *starlingxv1.HostProfileSpec) bool {
+	logHost.Info("Starting CompareOSDs")
+
 	if other == nil {
+		logHost.Info("Other profile is nil, returning false")
 		return false
 	}
 
 	if (in.Storage == nil) && (other.Storage == nil) {
+		logHost.Info("Both Storage fields are nil, returning true")
 		return true
-
 	} else if in.Storage != nil {
+		logHost.Info("In profile Storage is not nil, checking for equality")
+
 		if in.Storage.DeepEqual(other.Storage) {
 			// The full storage profile matches therefore the OSDs match.
+			logHost.Info("Full storage profile matches, OSDs match")
 			return true
 		}
 
 		if in.Storage.OSDs != nil {
 			// Otherwise just check the OSD list and ignore the other attributes.
+			logHost.Info("Checking OSD list only")
 			if !in.Storage.OSDs.DeepEqual(other.Storage.OSDs) {
+				logHost.Info("OSD lists differ, returning false")
 				return false
 			}
 		} else if other.Storage.OSDs != nil && len(*other.Storage.OSDs) > 0 {
+			logHost.Info("Other Storage OSDs is not nil and has elements, returning false")
 			return false
 		}
-
 	} else if other.Storage.OSDs != nil && len(*other.Storage.OSDs) > 0 {
+		logHost.Info("In Storage is nil, but other Storage OSDs has elements, returning false")
 		return false
 	}
 
+	logHost.Info("CompareOSDs completed successfully, returning true")
 	return true
 }
 
@@ -954,47 +979,61 @@ func (r *HostReconciler) CompareAttributes(in *starlingxv1.HostProfileSpec, othe
 // storage OSD resources therefore return false if there are any differences
 // in the storage OSD list.
 func (r *HostReconciler) CompareEnabledAttributes(in *starlingxv1.HostProfileSpec, other *starlingxv1.HostProfileSpec, instance *starlingxv1.Host, personality string) bool {
+	logHost.Info("Starting CompareEnabledAttributes", "personality", personality)
+
 	if other == nil {
+		logHost.Info("Other profile is nil, returning false")
 		return false
 	}
 
 	if instance.Status.DeploymentScope != cloudManager.ScopePrincipal && in.AdministrativeState != nil {
+		logHost.Info("Checking AdministrativeState differences")
 		if (in.AdministrativeState == nil) != (other.AdministrativeState == nil) {
+			logHost.Info("AdministrativeState mismatch, returning false")
 			return false
 		} else if in.AdministrativeState != nil {
 			if *in.AdministrativeState != *other.AdministrativeState {
+				logHost.Info("AdministrativeState values differ, returning false", "in", *in.AdministrativeState, "other", *other.AdministrativeState)
 				return false
 			}
 		}
 	}
 
 	if utils.IsReconcilerEnabled(utils.OSD) {
+		logHost.Info("OSD reconciliation enabled, checking OSD state")
 		switch r.OSDProvisioningState(instance.Namespace, personality) {
 		case RequiredStateEnabled, RequiredStateAny:
 			if !r.CompareOSDs(in, other) {
+				logHost.Info("OSD comparison failed, returning false")
 				return false
 			}
 		}
 	}
 
 	if utils.IsReconcilerEnabled(utils.FileSystemSizes) {
+		logHost.Info("FileSystemSizes reconciliation enabled, checking file systems")
 		if in.Storage != nil && in.Storage.FileSystems != nil {
 			if other.Storage == nil {
+				logHost.Info("Other storage is nil, returning false")
 				return false
 			}
 
 			if !in.Storage.FileSystems.DeepEqual(other.Storage.FileSystems) {
+				logHost.Info("FileSystem comparison failed, returning false")
 				return false
 			}
 		}
 	}
 
 	if utils.IsReconcilerEnabled(utils.Route) {
+		logHost.Info("Route reconciliation enabled, checking routes")
 		if !in.Routes.DeepEqual(&other.Routes) {
+			logHost.Info("Routes differ, returning false")
 			return false
 		}
 	}
 
+	logHost.Info("CompareEnabledAttributes completed, returning true")
 	return true
 }
 
@@ -1002,7 +1041,10 @@ func (r *HostReconciler) CompareEnabledAttributes(in *starlingxv1.HostProfileSpe
 // purpose of reconciling any attributes that can only be applied when the host
 // is disabled.
 func (r *HostReconciler) CompareDisabledAttributes(in *starlingxv1.HostProfileSpec, other *starlingxv1.HostProfileSpec, namespace, personality string, reconfig bool) bool {
+	logHost.Info("Starting CompareDisabledAttributes", "namespace", namespace, "personality", personality, "reconfig", reconfig)
+
 	if other == nil {
+		logHost.Info("Other profile is nil, returning false")
 		return false
 	}
 
@@ -1010,9 +1052,11 @@ func (r *HostReconciler) CompareDisabledAttributes(in *starlingxv1.HostProfileSp
 	// to ignore difference. Put original value back after DeepEqual
 	adminState := other.ProfileBaseAttributes.AdministrativeState
 	if reconfig {
+		logHost.Info("Reconfiguration mode enabled, copying AdministrativeState")
 		other.ProfileBaseAttributes.AdministrativeState = in.ProfileBaseAttributes.AdministrativeState
 	}
 	if !in.ProfileBaseAttributes.DeepEqual(&other.ProfileBaseAttributes) {
+		logHost.Info("ProfileBaseAttributes differ, returning false")
 		if reconfig {
 			other.ProfileBaseAttributes.AdministrativeState = adminState
 		}
@@ -1023,66 +1067,83 @@ func (r *HostReconciler) CompareDisabledAttributes(in *starlingxv1.HostProfileSp
 	}
 
 	if (in.BoardManagement == nil) != (other.BoardManagement == nil) {
+		logHost.Info("BoardManagement presence differs, returning false")
 		return false
 	} else if in.BoardManagement != nil {
 		if !in.BoardManagement.DeepEqual(other.BoardManagement) {
+			logHost.Info("BoardManagement values differ, returning false")
 			return false
 		}
 	}
 
 	if utils.IsReconcilerEnabled(utils.Memory) {
+		logHost.Info("Memory reconciliation enabled, checking memory")
 		if !in.Memory.DeepEqual(&other.Memory) {
+			logHost.Info("Memory comparison failed, returning false")
 			return false
 		}
 	}
 
 	if utils.IsReconcilerEnabled(utils.Processor) {
+		logHost.Info("Processor reconciliation enabled, checking processors")
 		if !in.Processors.DeepEqual(&other.Processors) {
+			logHost.Info("Processor comparison failed, returning false")
 			return false
 		}
 	}
 
 	if utils.IsReconcilerEnabled(utils.Networking) {
+		logHost.Info("Networking reconciliation enabled, checking interfaces and addresses")
 		if utils.IsReconcilerEnabled(utils.Interface) {
 			if (in.Interfaces == nil) != (other.Interfaces == nil) {
+				logHost.Info("Interface presence mismatch, returning false")
 				return false
 			} else if in.Interfaces != nil {
 				if !in.Interfaces.DeepEqual(other.Interfaces) {
+					logHost.Info("Interfaces differ, returning false")
 					return false
 				}
 			} else {
+				logHost.Info("Interfaces mismatch, returning false")
 				return false
 			}
 		}
 
 		if utils.IsReconcilerEnabled(utils.Address) {
 			if !in.Addresses.DeepEqual(&other.Addresses) {
+				logHost.Info("Addresses differ, returning false")
 				return false
 			}
 		}
 
 		if !reconfig && utils.IsReconcilerEnabled(utils.Route) {
 			if !in.Routes.DeepEqual(&other.Routes) {
+				logHost.Info("Routes differ, returning false")
 				return false
 			}
 		}
 	}
 
 	if utils.IsReconcilerEnabled(utils.FileSystemTypes) {
+		logHost.Info("FileSystemTypes reconciliation enabled, checking file system types")
 		if !r.CompareFileSystemTypes(in, other) {
+			logHost.Info("FileSystemTypes comparison failed, returning false")
 			return false
 		}
 	}
 
 	if utils.IsReconcilerEnabled(utils.OSD) {
+		logHost.Info("OSD reconciliation enabled, checking OSD state")
 		switch r.OSDProvisioningState(namespace, personality) {
 		case RequiredStateDisabled, RequiredStateAny:
 			if !r.CompareOSDs(in, other) {
+				logHost.Info("OSD comparison failed, returning false")
 				return false
 			}
 		}
 	}
 
+	logHost.Info("CompareDisabledAttributes completed, returning true")
 	return true
 }
 
